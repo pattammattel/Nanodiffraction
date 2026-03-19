@@ -488,9 +488,9 @@ class RSM:
     def calcRSM(self,coor,data_store = 'reduced'):
         sz = np.shape(self.det_data)
         data_type = self.det_data.dtype
-        sz_len = np.size(sz)
-        det_row = sz[sz_len-2]
-        det_col = sz[sz_len-1]
+        
+        det_row = sz[-2]
+        det_col = sz[-1]
         Mx = np.matrix([[1., 0., 0.],[0.,np.cos(self.delta),-np.sin(self.delta)],[0.,np.sin(self.delta),np.cos(self.delta)]])
         My = np.matrix([[np.cos(self.gamma),0.,np.sin(self.gamma)],[0.,1.,0.],[-np.sin(self.gamma),0.,np.cos(self.gamma)]])
         M_D2L = My@Mx

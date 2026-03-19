@@ -16,8 +16,15 @@ import os
 import sys
 #sys.path.insert(0, '/nsls2/data2/hxn/shared/config/bluesky_overlay/2023-1.0-py310-tiled/lib/python3.10/site-packages')
 sys.path.insert(0,'/nsls2/data/hxn/legacy/home/xf03id/src/hxntools')
-from hxntools.CompositeBroker import db, get_path as get_path_new
-from hxntools.scan_info import get_scan_positions
+try:
+    from hxntools.CompositeBroker import db, get_path as get_path_new
+except ImportError:
+    print("dataBroker not installed")
+try:
+    from hxntools.scan_info import get_scan_positions
+except ImportError:
+    print("hxntools not found")
+
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import concurrent.futures as concurrent
 import gc
@@ -56,33 +63,57 @@ def get_sid_list(str_list, interval):
     return sid_list
 
 
-def load_ims(file_list):
-    # stacking is along the first axis
-    num_ims = np.size(file_list)
-    for i in tqdm(range(num_ims),desc="Progress"):
-        file_name = file_list[i]
-        im = tifffile.imread(file_name)
-        im_row, im_col = np.shape(im)
-        if i == 0:
-            im_stack = np.reshape(im,(1,im_row,im_col))
-        else:
-            #im_stack_num = i 
-            im_stack_num, im_stack_row,im_stack_col = np.shape(im_stack)
-            row = np.maximum(im_row,im_stack_row)
-            col = np.maximum(im_col,im_stack_col)
-            if im_row < im_stack_row:
-                r_s = np.round((im_stack_row-im_row)/2)
-            else:
-                r_s = 0
-            if im_col < im_stack_col:
-                c_s = np.round((im_stack_col-im_col)/2)
-            else:
-                c_s = 0
-            im_stack_tmp = np.zeros((im_stack_num+1,row,col))
-            im_stack_tmp[0:im_stack_num,0:im_stack_row,0:im_stack_col] = im_stack
+# def load_ims(file_list):
+#     # stacking is along the first axis
+#     num_ims = np.size(file_list)
+#     for i in tqdm(range(num_ims),desc="Progress"):
+#         file_name = file_list[i]
+#         im = tifffile.imread(file_name)
+#         im_row, im_col = np.shape(im)
+#         if i == 0:
+#             im_stack = np.reshape(im,(1,im_row,im_col))
+#         else:
+#             #im_stack_num = i 
+#             im_stack_num, im_stack_row,im_stack_col = np.shape(im_stack)
+#             row = np.maximum(im_row,im_stack_row)
+#             col = np.maximum(im_col,im_stack_col)
+#             if im_row < im_stack_row:
+#                 r_s = np.round((im_stack_row-im_row)/2)
+#             else:
+#                 r_s = 0
+#             if im_col < im_stack_col:
+#                 c_s = np.round((im_stack_col-im_col)/2)
+#             else:
+#                 c_s = 0
+#             im_stack_tmp = np.zeros((im_stack_num+1,row,col))
+#             im_stack_tmp[0:im_stack_num,0:im_stack_row,0:im_stack_col] = im_stack
             
-            im_stack_tmp[im_stack_num,r_s:im_row+r_s,c_s:im_col+c_s] = im
-            im_stack = im_stack_tmp
+#             im_stack_tmp[im_stack_num,r_s:im_row+r_s,c_s:im_col+c_s] = im
+#             im_stack = im_stack_tmp
+#     return im_stack
+
+def load_ims(file_list):
+    # First pass: determine max image size
+    max_row, max_col = 0, 0
+    for fname in file_list:
+        im = tifffile.imread(fname)
+        r, c = im.shape
+        max_row = max(max_row, r)
+        max_col = max(max_col, c)
+
+    num_ims = len(file_list)
+    im_stack = np.zeros((num_ims, max_row, max_col), dtype=np.float32)
+
+    # Second pass: load and center-pad each image
+    for i, fname in enumerate(tqdm(file_list, desc="Loading images")):
+        im = tifffile.imread(fname)
+        r, c = im.shape
+
+        r_start = (max_row - r) // 2
+        c_start = (max_col - c) // 2
+
+        im_stack[i, r_start:r_start+r, c_start:c_start+c] = im
+
     return im_stack
 
 
@@ -369,7 +400,7 @@ def load_h5_data_db_parallel(sid_list, det, mon=None, roi=None, mask=None, thres
     # === Process scans 1...num_scans-1 concurrently ===
     num_cores = os.cpu_count() or 1
     max_workers = min(max_workers, num_cores)
-    ctx = mp.get_context("spawn") #new
+    ctx = mp.get_context("spawn") #ensure to create a new db session for each subprocess to be fork-safe
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
         futures = {executor.submit(load_h5_data_db_v1, sid_list[i],det, mon,roi,mask,threshold, bins): i for i in range(num_scans)}
         for future in tqdm(as_completed(futures), total=num_scans, desc="Progress"):
@@ -436,7 +467,7 @@ def sum_all_h5_data_db_parallel(sid_list, det, max_workers=10):
     # Get the number of available CPU cores and cap the workers appropriately.
     num_cores = os.cpu_count() or 1
     max_workers = min(max_workers, num_cores)
-    ctx = mp.get_context("spawn") #new
+    ctx = mp.get_context("spawn") #ensure to create a new db session for each subprocess to be fork-safe
     
     print(f"Using {max_workers} workers (desired: {max_workers}, available cores: {num_cores}).")
     
@@ -1725,3 +1756,11 @@ def bin_image(img, bins = 2):
     img = img.reshape(h_new, bins, w_new, bins)
     return img.sum(axis=(1, 3))
     
+def select_file():
+    root = tk.Tk()
+    root.withdraw()  # Hide the main tkinter window
+    file_path = filedialog.askopenfilename(
+        title="Select a .obj file",
+        filetypes=[("obj Files", "*.obj"), ("All Files", "*.*")]
+    )
+    return file_path
